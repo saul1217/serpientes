@@ -186,6 +186,7 @@ export default function Board({ state, myPlayerId, focusCell }) {
 
   // Build cells
   const cells = [];
+  const bgCells = [];
   for (let dRow = 0; dRow < 10; dRow++) {
     for (let col = 0; col < 10; col++) {
       const cellNum = getCellNumber(dRow, col);
@@ -196,10 +197,17 @@ export default function Board({ state, myPlayerId, focusCell }) {
       const numColor = NUM_COLORS[cellNum % 10];
       const decor = CELL_DECORS[cellNum % CELL_DECORS.length];
 
+      bgCells.push(
+        <div key={`bg-${cellNum}`}
+          className={`cell-bg ${isStart ? 'cell-start' : isFinish ? 'cell-finish' : ''}`}
+          style={{ background: bg }}
+        />
+      );
+
       cells.push(
         <div key={cellNum} id={`cell-${cellNum}`}
           className={`cell ${isStart ? 'cell-start' : isFinish ? 'cell-finish' : ''}`}
-          style={{ background: bg, '--border-c': border }}
+          style={{ '--border-c': border, '--bg-c': bg }}
           data-cell={cellNum}>
           {/* Number badge */}
           <div className="cell-num-badge" style={{ background: border, color: '#fff' }}>
@@ -239,13 +247,14 @@ export default function Board({ state, myPlayerId, focusCell }) {
         <span>🎲 Casillas 1 – 100</span>
       </div>
       <div className="board-inner">
-        <div className="board-cell-grid">{cells}</div>
+        <div className="board-bg-grid">{bgCells}</div>
         {board && (
           <svg className="board-svg" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true">
             {board.ladders.map(l => <LadderSVG key={l.id} ladder={l} />)}
             {board.snakes.map(s => <SnakeSVG key={s.id} snake={s} />)}
           </svg>
         )}
+        <div className="board-cell-grid">{cells}</div>
       </div>
     </div>
   );
