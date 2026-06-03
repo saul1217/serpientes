@@ -103,9 +103,19 @@ class GameRoom {
 //  Move Processing
 // ─────────────────────────────────────────────
 function processMove(roomCode, room, player, roll) {
-  const newPos = Math.min(player.position + roll, 100);
+  let currentPos = player.position;
   const path = [];
-  for (let i = player.position + 1; i <= newPos; i++) path.push(i);
+  let forward = true;
+  for (let i = 0; i < roll; i++) {
+    if (forward) {
+      currentPos++;
+      if (currentPos === 100) forward = false;
+    } else {
+      currentPos--;
+    }
+    path.push(currentPos);
+  }
+  const newPos = currentPos;
   player.position = newPos;
   room.phase = 'moving';
 
