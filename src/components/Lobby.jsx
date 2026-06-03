@@ -28,15 +28,30 @@ export default function Lobby({ socket, onGameStart, onRoomCreated }) {
   // ── HOST: Create room (no player join) ───────────────────
   function handleCreateHost() {
     setLoading(true);
-    socket.connect();
-    socket.emit('create-room', (res) => {
-      setLoading(false);
-      if (!res.success) { setError('Error creando sala'); return; }
-      setRoomCode(res.roomCode);
-      setPlayers([]);
-      onRoomCreated(res.roomCode, null, true);
-      setScreen('host-waiting');
-    });
+    setError('');
+
+    function doCreate() {
+      socket.emit('create-room', (res) => {
+        setLoading(false);
+        if (!res || !res.success) { setError('Error creando sala. Intenta de nuevo.'); return; }
+        setRoomCode(res.roomCode);
+        setPlayers([]);
+        onRoomCreated(res.roomCode, null, true);
+        setScreen('host-waiting');
+      });
+    }
+
+    if (socket.connected) {
+      doCreate();
+    } else {
+      socket.once('connect', doCreate);
+      socket.once('connect_error', (err) => {
+        setLoading(false);
+        setError('No se pudo conectar al servidor. Recarga la página.');
+        console.error('Socket connect error:', err);
+      });
+      socket.connect();
+    }
   }
 
   // ── PLAYER: Join room ────────────────────────────────────
@@ -47,14 +62,28 @@ export default function Lobby({ socket, onGameStart, onRoomCreated }) {
     if (!selectedObject) { setError('Selecciona tu objeto'); return; }
     setError('');
     setLoading(true);
-    socket.connect();
-    socket.emit('join-room', { roomCode: code, playerName: playerName.trim(), objectId: selectedObject }, (res) => {
-      setLoading(false);
-      if (!res.success) { setError(res.error || 'Error al unirse'); return; }
-      setRoomCode(code);
-      onRoomCreated(code, res.playerId, false);
-      setScreen('player-waiting');
-    });
+
+    function doJoin() {
+      socket.emit('join-room', { roomCode: code, playerName: playerName.trim(), objectId: selectedObject }, (res) => {
+        setLoading(false);
+        if (!res || !res.success) { setError(res?.error || 'Error al unirse'); return; }
+        setRoomCode(code);
+        onRoomCreated(code, res.playerId, false);
+        setScreen('player-waiting');
+      });
+    }
+
+    if (socket.connected) {
+      doJoin();
+    } else {
+      socket.once('connect', doJoin);
+      socket.once('connect_error', (err) => {
+        setLoading(false);
+        setError('No se pudo conectar al servidor. Recarga la página.');
+        console.error('Socket connect error:', err);
+      });
+      socket.connect();
+    }
   }
 
   function refreshTaken(code) {
