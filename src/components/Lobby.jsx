@@ -68,7 +68,7 @@ export default function Lobby({ socket, onGameStart, onRoomCreated }) {
         setLoading(false);
         if (!res || !res.success) { setError(res?.error || 'Error al unirse'); return; }
         setRoomCode(code);
-        onRoomCreated(code, res.playerId, false);
+        onRoomCreated(code, res.playerId, false, playerName.trim(), selectedObject);
         setScreen('player-waiting');
       });
     }

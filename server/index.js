@@ -341,22 +341,69 @@ io.on('connection', (socket) => {
     console.log(`❌ Disconnected: ${socket.id}`);
     for (const [code, room] of rooms) {
       const player = room.players.find(p => p.socketId === socket.id);
-      if (player) {
-        player.connected = false;
-        io.to(code).emit('player-disconnected', { playerId: player.id, state: room.getState() });
-        // If it was this player's turn and they disconnect during voting, end the challenge
-        if (room.phase === 'voting' && room.players[room.currentPlayerIndex]?.id === player.id) {
-          const currentPlayer = room.players[room.currentPlayerIndex];
-          setTimeout(() => endChallenge(code, room, currentPlayer), 1000);
-        }
+      if (!player) continue;
+
+      player.connected = false;
+      io.to(code).emit('player-disconnected', { playerId: player.id, state: room.getState() });
+      console.log(`📵 ${player.name} desconectado de ${code} (fase: ${room.phase})`);
+
+      const isCurrentPlayer = room.players[room.currentPlayerIndex]?.id === player.id;
+
+      // ─ Si era su turno en fase rolling, avanzar automáticamente tras 8 s
+      if (isCurrentPlayer && room.phase === 'rolling' && room.players.filter(p => p.connected).length >= 1) {
+        console.log(`⏱️ Auto-skip de ${player.name} en ${code} en 8s`);
+        setTimeout(() => {
+          // Solo actuar si sigue desconectado y sigue siendo su turno
+          if (!player.connected && room.phase === 'rolling' &&
+              room.players[room.currentPlayerIndex]?.id === player.id) {
+            io.to(code).emit('player-skipped', { playerId: player.id, playerName: player.name, state: room.getState() });
+            advanceTurn(code, room);
+          }
+        }, 8000);
       }
-      // Clean up empty rooms
+
+      // ─ Si era su turno en fase voting, terminar reto en 2 s
+      if (isCurrentPlayer && room.phase === 'voting') {
+        setTimeout(() => endChallenge(code, room, player), 2000);
+      }
+
+      // ─ Si quedan 0 conectados, guardar sala 2 minutos antes de borrar
       if (room.players.every(p => !p.connected)) {
-        if (room.challengeTimer) clearTimeout(room.challengeTimer);
-        rooms.delete(code);
-        console.log(`🗑️ Room deleted: ${code}`);
+        console.log(`⏳ Sala ${code} vacía, se borrará en 2 min si nadie reconecta`);
+        room._emptyTimer = setTimeout(() => {
+          if (room.players.every(p => !p.connected)) {
+            if (room.challengeTimer) clearTimeout(room.challengeTimer);
+            rooms.delete(code);
+            console.log(`🗑️ Sala eliminada por inactividad: ${code}`);
+          }
+        }, 2 * 60 * 1000); // 2 minutos
       }
     }
+  });
+
+  // REJOIN (reconexion tras recargar página)
+  socket.on('rejoin-room', ({ roomCode, playerId, playerName }, callback) => {
+    const code = roomCode?.toUpperCase();
+    const room = rooms.get(code);
+    if (!room) return callback({ success: false, error: 'Sala no encontrada o expirada' });
+    if (room.phase === 'lobby') return callback({ success: false, error: 'El juego no ha comenzado' });
+
+    // Buscar por ID primero, luego por nombre
+    let player = room.players.find(p => p.id === playerId);
+    if (!player) player = room.players.find(p => p.name.toLowerCase() === playerName?.toLowerCase());
+    if (!player) return callback({ success: false, error: 'No se encontró tu jugador en esta sala' });
+
+    // Cancelar timer de borrado si existía
+    if (room._emptyTimer) { clearTimeout(room._emptyTimer); room._emptyTimer = null; }
+
+    // Actualizar socket y marcar conectado
+    player.socketId = socket.id;
+    player.connected = true;
+    socket.join(code);
+
+    console.log(`🔄 ${player.name} reconectado en ${code}`);
+    callback({ success: true, playerId: player.id, state: room.getState() });
+    io.to(code).emit('player-reconnected', { playerId: player.id, playerName: player.name, state: room.getState() });
   });
 });
 

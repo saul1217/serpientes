@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+﻿import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { socket } from './socket.js';
 import Lobby from './components/Lobby.jsx';
 import Board from './components/Board.jsx';
@@ -17,12 +17,20 @@ function stateWithPlayerAt(state, playerId, pos) {
   };
 }
 
+// ── Session helpers ──────────────────────────────────────────
+const SESSION_KEY = 'serpientes_session';
+function saveSession(data) { try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(data)); } catch {} }
+function loadSession() { try { return JSON.parse(sessionStorage.getItem(SESSION_KEY) || 'null'); } catch { return null; } }
+function clearSession() { try { sessionStorage.removeItem(SESSION_KEY); } catch {} }
+
 export default function App() {
   const [screen, setScreen] = useState('lobby');
   const [gameState, setGameState] = useState(null);
   const [myPlayerId, setMyPlayerId] = useState(null);
   const [roomCode, setRoomCode] = useState('');
   const [isHost, setIsHost] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
+  const [reconnectError, setReconnectError] = useState('');
 
   const [rolling, setRolling] = useState(false);
   const [currentEvent, setCurrentEvent] = useState(null);
@@ -36,6 +44,48 @@ export default function App() {
 
   // step-by-step animation queue
   const animRef = useRef(null);
+
+  // ── Try auto-reconnect on mount if session exists ────────────────────
+  useEffect(() => {
+    const session = loadSession();
+    if (!session) return;
+    setReconnecting(true);
+    setReconnectError('');
+
+    function attemptRejoin() {
+      socket.emit('rejoin-room',
+        { roomCode: session.roomCode, playerId: session.playerId, playerName: session.playerName },
+        (res) => {
+          if (res.success) {
+            setRoomCode(session.roomCode);
+            setMyPlayerId(res.playerId);
+            setIsHost(session.isHost || false);
+            setGameState(res.state);
+            setRevealedChallenges(res.state.revealedChallenges || []);
+            const myPos = res.state.players.find(p => p.id === res.playerId)?.position || 1;
+            setFocusCell(myPos);
+            setScreen('game');
+          } else {
+            clearSession();
+            setReconnectError(res.error || 'No se pudo reconectar');
+          }
+          setReconnecting(false);
+        }
+      );
+    }
+
+    if (socket.connected) {
+      attemptRejoin();
+    } else {
+      socket.once('connect', attemptRejoin);
+      socket.once('connect_error', () => {
+        clearSession();
+        setReconnecting(false);
+        setReconnectError('Error de conexión');
+      });
+      socket.connect();
+    }
+  }, []);
 
   const animateSteps = useCallback((path, playerId, baseState, onDone) => {
     if (animRef.current) clearTimeout(animRef.current);
@@ -131,13 +181,27 @@ export default function App() {
       setGameState(state); setGameOver({ winnerId, winnerName }); setScreen('gameover');
     });
 
-    socket.on('player-disconnected', ({ state }) => {
-      setGameState(state); showNotification('Un jugador se desconectó', '📴');
+    socket.on('player-disconnected', ({ playerId, state }) => {
+      const p = state.players.find(pl => pl.id === playerId);
+      setGameState(state);
+      showNotification(`${p?.name || 'Un jugador'} se desconectó`, '📵');
+    });
+
+    socket.on('player-reconnected', ({ playerName, state }) => {
+      setGameState(state);
+      showNotification(`${playerName} reconectó ✅`, '🔄');
+    });
+
+    socket.on('player-skipped', ({ playerName, state }) => {
+      setGameState(state);
+      showNotification(`Turno de ${playerName} saltado (desconectado)`, '⏭️');
+      setRolling(false);
     });
 
     return () => {
       ['game-started','dice-rolled','player-moved','snake-event','ladder-event','global-snake',
-       'challenge-start','vote-updated','challenge-result','turn-start','game-over','player-disconnected']
+       'challenge-start','vote-updated','challenge-result','turn-start','game-over',
+       'player-disconnected','player-reconnected','player-skipped']
         .forEach(e => socket.off(e));
     };
   }, [animateSteps]);
@@ -160,13 +224,43 @@ export default function App() {
     socket.emit('challenge-vote', { roomCode, vote: direction });
   };
 
-  const handleRoomCreated = (code, playerId, host) => {
+  const handleRoomCreated = (code, playerId, host, playerName, objectId) => {
     setRoomCode(code); setMyPlayerId(playerId); setIsHost(host);
+    // Guardar sesión para reconexion automática
+    if (!host && playerId) {
+      saveSession({ roomCode: code, playerId, playerName, objectId, isHost: false });
+    } else if (host) {
+      saveSession({ roomCode: code, playerId: null, playerName: null, isHost: true });
+    }
   };
+
+  // Limpiar sesión al terminar el juego
+  useEffect(() => {
+    if (screen === 'gameover') clearSession();
+  }, [screen]);
+
+  // ── RECONECTANDO ───────────────────────────────────────
+  if (reconnecting) return (
+    <div className="loading" style={{ flexDirection: 'column', gap: 16 }}>
+      <div style={{ fontSize: 48 }}>🔄</div>
+      <div>Reconectando a la partida...</div>
+      <div style={{ fontSize: 13, opacity: 0.6 }}>Si tarda mucho, recarga la página</div>
+    </div>
+  );
 
   // ── LOBBY ──────────────────────────────────────────────
   if (screen === 'lobby') return (
     <div className="app-lobby">
+      {reconnectError && (
+        <div style={{
+          position: 'fixed', top: 16, left: '50%', transform: 'translateX(-50%)',
+          background: 'rgba(239,68,68,0.15)', border: '1.5px solid #ef4444',
+          borderRadius: 12, padding: '10px 20px', color: '#fca5a5',
+          fontSize: 13, fontWeight: 700, zIndex: 200, whiteSpace: 'nowrap',
+        }}>
+          ⚠️ {reconnectError} — inicia una nueva sesión
+        </div>
+      )}
       <Lobby socket={socket} onGameStart={s => { setGameState(s); setScreen('game'); }} onRoomCreated={handleRoomCreated} />
     </div>
   );
